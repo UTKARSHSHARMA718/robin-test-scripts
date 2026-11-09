@@ -1,0 +1,20 @@
+{
+  "name": "pad-mcp-robin-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Express + LangChain UI to generate PAD Robin scripts via pad-mcp",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js"
+  },
+  "dependencies": {
+    "@langchain/core": "^1.3.5",
+    "@langchain/google-genai": "^2.3.5",
+    "@langchain/openai": "^1.8.2",
+    "@modelcontextprotocol/client": "2.4.0",
+    "dotenv": "^16.6.1",
+    "express": "^5.1.0",
+    "zod": "^3.25.76"
+  }
+}

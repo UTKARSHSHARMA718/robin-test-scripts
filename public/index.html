@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PAD Robin script generator</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --panel: #1a2332;
+      --border: #2d3a4f;
+      --text: #e7ecf3;
+      --muted: #9aa8bc;
+      --accent: #3b82f6;
+      --accent-hover: #2563eb;
+      --error: #f87171;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+    }
+    .wrap {
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 2rem 1.25rem 3rem;
+    }
+    h1 {
+      font-size: 1.5rem;
+      font-weight: 600;
+      margin: 0 0 0.35rem;
+    }
+    .subtitle {
+      color: var(--muted);
+      font-size: 0.95rem;
+      margin-bottom: 1.75rem;
+    }
+    label {
+      display: block;
+      font-size: 0.85rem;
+      font-weight: 500;
+      margin-bottom: 0.4rem;
+      color: var(--muted);
+    }
+    textarea, select {
+      width: 100%;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-size: 1rem;
+      padding: 0.75rem 0.9rem;
+    }
+    textarea {
+      min-height: 140px;
+      resize: vertical;
+      font-family: inherit;
+    }
+    select { margin-bottom: 1.25rem; cursor: pointer; }
+    .field { margin-bottom: 1.25rem; }
+    button {
+      width: 100%;
+      padding: 0.85rem 1rem;
+      font-size: 1rem;
+      font-weight: 600;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      background: var(--accent);
+      color: #fff;
+    }
+    button:hover:not(:disabled) { background: var(--accent-hover); }
+    button:disabled { opacity: 0.55; cursor: not-allowed; }
+    .output-section {
+      margin-top: 2rem;
+      padding-top: 1.5rem;
+      border-top: 1px solid var(--border);
+    }
+    .output-section h2 {
+      font-size: 1rem;
+      margin: 0 0 0.75rem;
+      color: var(--muted);
+    }
+    #output {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1rem;
+      min-height: 120px;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-size: 0.9rem;
+    }
+    #meta {
+      margin-top: 0.5rem;
+      font-size: 0.8rem;
+      color: var(--muted);
+    }
+    .error { color: var(--error); }
+    .loading { color: var(--muted); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Robin script generator</h1>
+    <p class="subtitle">Uses pad-mcp + your configured LLM (see server <code>.env</code>).</p>
+
+    <form id="form">
+      <div class="field">
+        <label for="mode">PAD mode</label>
+        <select id="mode" name="mode" required>
+          <option value="classic">Classic (Power Fx disabled)</option>
+          <option value="powerfx">Power Fx enabled</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="requirement">What should the flow do?</label>
+        <textarea
+          id="requirement"
+          name="requirement"
+          placeholder="Example: Read rows from Excel at C:\Data\orders.xlsx, filter Status = Open, append each row to a log file."
+          required
+        ></textarea>
+      </div>
+      <button type="submit" id="submit">Generate Robin script</button>
+    </form>
+
+    <section class="output-section">
+      <h2>Output</h2>
+      <div id="output" class="loading">Results will appear here.</div>
+      <div id="meta"></div>
+    </section>
+  </div>
+
+  <script>
+    const form = document.getElementById('form');
+    const output = document.getElementById('output');
+    const meta = document.getElementById('meta');
+    const submitBtn = document.getElementById('submit');
+
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const requirement = document.getElementById('requirement').value.trim();
+      const mode = document.getElementById('mode').value;
+
+      submitBtn.disabled = true;
+      output.className = 'loading';
+      output.textContent = 'Calling pad-mcp and the LLM… this may take a minute.';
+      meta.textContent = '';
+
+      try {
+        const response = await fetch('/api/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ requirement, mode })
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          output.className = 'error';
+          output.textContent = data.error ?? 'Request failed.';
+          return;
+        }
+        output.className = '';
+        output.textContent = data.output ?? '(empty response)';
+        meta.textContent = `Provider: ${data.provider ?? '—'} · Tool/LLM steps: ${data.steps ?? '—'}`;
+      } catch (err) {
+        output.className = 'error';
+        output.textContent = err.message ?? 'Network error.';
+      } finally {
+        submitBtn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
