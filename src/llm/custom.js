@@ -6,7 +6,7 @@
 export function getCustomConfig(env) {
   if (!env.url) throw new Error('CUSTOM_LLM_URL is required when LLM_PROVIDER=custom.');
   if (!env.apiKey) throw new Error('CUSTOM_LLM_API_KEY is required when LLM_PROVIDER=custom.');
-  if (!env.model) throw new Error('CUSTOM_LLM_MODEL is required when LLM_PROVIDER=custom.');
+  if (!env.model) throw new Error('Model name is required for custom LLM (UI or CUSTOM_LLM_MODEL).');
   return env;
 }
 

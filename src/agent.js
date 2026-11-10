@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { DynamicStructuredTool } from '@langchain/core/tools';
 import { AIMessage, HumanMessage, SystemMessage, ToolMessage } from '@langchain/core/messages';
-import { loadLlmFromEnv } from './llm/index.js';
+import { loadLlm } from './llm/index.js';
 import {
   withMcpClient,
   callMcpTool,
@@ -48,8 +48,18 @@ function ensurePowerFx(toolName, args, powerFx) {
   return { ...args, power_fx: powerFx };
 }
 
-export async function generateRobinScript({ requirement, powerFx, config }) {
-  const llm = loadLlmFromEnv();
+function buildMigrationUserMessage(requirement) {
+  return [
+    'Generate a Power Automate Desktop Robin script for this migration brief.',
+    'The brief may come from an Automation Anywhere bot analysis (user-edited).',
+    'Map each AA capability to PAD using pad-mcp tools before writing code.',
+    '',
+    requirement
+  ].join('\n');
+}
+
+export async function generateRobinScript({ requirement, powerFx, model, config }) {
+  const llm = loadLlm(model);
   const maxSteps = config.maxSteps;
 
   return withMcpClient(config, async mcpClient => {
@@ -57,7 +67,7 @@ export async function generateRobinScript({ requirement, powerFx, config }) {
     const lcTools = await buildMcpLangChainTools(mcpClient);
     const messages = [
       new SystemMessage(buildSystemPrompt(padContext, powerFx)),
-      new HumanMessage(requirement)
+      new HumanMessage(buildMigrationUserMessage(requirement))
     ];
 
     for (let step = 0; step < maxSteps; step++) {
@@ -67,7 +77,8 @@ export async function generateRobinScript({ requirement, powerFx, config }) {
         return {
           output: content ?? 'No response from the model.',
           steps: step + 1,
-          provider: llm.provider
+          provider: llm.provider,
+          model: llm.model
         };
       }
 
@@ -100,7 +111,8 @@ export async function generateRobinScript({ requirement, powerFx, config }) {
     return {
       output: 'Stopped after maximum tool steps. Try a shorter request or raise AGENT_MAX_STEPS.',
       steps: maxSteps,
-      provider: llm.provider
+      provider: llm.provider,
+      model: llm.model
     };
   });
 }

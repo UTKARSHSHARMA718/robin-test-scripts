@@ -13,8 +13,10 @@
     "@langchain/google-genai": "^2.3.5",
     "@langchain/openai": "^1.8.2",
     "@modelcontextprotocol/client": "2.4.0",
+    "adm-zip": "^0.5.16",
     "dotenv": "^16.6.1",
     "express": "^5.1.0",
+    "multer": "^2.0.2",
     "zod": "^3.25.76"
   }
 }
