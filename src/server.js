@@ -6,6 +6,7 @@ import multer from 'multer';
 import { generateRobinScript } from './agent.js';
 import { analyzeAaExport } from './aa-analyzer.js';
 import { assertUploadSize, parseAaUpload } from './aa-bot.js';
+import { parsePricingFromBody } from './usage.js';
 
 dotenv.config({ path: path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '.env') });
 
@@ -74,6 +75,7 @@ app.post('/api/generate', async (req, res) => {
       requirement,
       powerFx,
       model,
+      pricing: parsePricingFromBody(req.body),
       config: mcpConfig()
     });
 

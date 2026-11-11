@@ -1,4 +1,5 @@
 import { ChatOpenAI } from '@langchain/openai';
+import { extractLangChainUsage } from '../usage.js';
 
 /**
  * OpenAI-compatible chat API (tool calling via LangChain).
@@ -31,5 +32,5 @@ function normalizeLangChainResponse(response) {
     : Array.isArray(response.content)
       ? response.content.filter(part => part.type === 'text').map(part => part.text).join('')
       : '';
-  return { content: text || null, toolCalls };
+  return { content: text || null, toolCalls, usage: extractLangChainUsage(response) };
 }

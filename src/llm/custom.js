@@ -1,3 +1,5 @@
+import { normalizeUsage } from '../usage.js';
+
 /**
  * Self-hosted LLM: API-KEY header, JSON body { model, messages }.
  * Response is normalized like openai.js when the server returns OpenAI-style JSON.
@@ -89,7 +91,8 @@ function normalizeCustomResponse(data) {
   const content = choice.content ?? data.content ?? null;
   return {
     content: typeof content === 'string' ? content : null,
-    toolCalls
+    toolCalls,
+    usage: normalizeUsage(data.usage)
   };
 }
 

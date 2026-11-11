@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { DynamicStructuredTool } from '@langchain/core/tools';
 import { AIMessage, HumanMessage, SystemMessage, ToolMessage } from '@langchain/core/messages';
 import { loadLlm } from './llm/index.js';
+import { addUsage, computeCost, emptyUsage } from './usage.js';
 import {
   withMcpClient,
   callMcpTool,
@@ -58,9 +59,19 @@ function buildMigrationUserMessage(requirement) {
   ].join('\n');
 }
 
-export async function generateRobinScript({ requirement, powerFx, model, config }) {
+function finalizeRun(result, usage, pricing) {
+  const cost = computeCost(usage, pricing);
+  return {
+    ...result,
+    usage,
+    ...(cost ? { cost } : {})
+  };
+}
+
+export async function generateRobinScript({ requirement, powerFx, model, config, pricing }) {
   const llm = loadLlm(model);
   const maxSteps = config.maxSteps;
+  let usage = emptyUsage();
 
   return withMcpClient(config, async mcpClient => {
     const padContext = await loadPadContext(mcpClient, powerFx);
@@ -71,15 +82,16 @@ export async function generateRobinScript({ requirement, powerFx, model, config 
     ];
 
     for (let step = 0; step < maxSteps; step++) {
-      const { content, toolCalls, assistantMessage } = await llm.invoke(messages, lcTools);
+      const { content, toolCalls, assistantMessage, usage: stepUsage } = await llm.invoke(messages, lcTools);
+      if (stepUsage) usage = addUsage(usage, stepUsage);
 
       if (!toolCalls.length) {
-        return {
+        return finalizeRun({
           output: content ?? 'No response from the model.',
           steps: step + 1,
           provider: llm.provider,
           model: llm.model
-        };
+        }, usage, pricing);
       }
 
       messages.push(assistantMessage ?? new AIMessage({
@@ -108,11 +120,11 @@ export async function generateRobinScript({ requirement, powerFx, model, config 
       }
     }
 
-    return {
+    return finalizeRun({
       output: 'Stopped after maximum tool steps. Try a shorter request or raise AGENT_MAX_STEPS.',
       steps: maxSteps,
       provider: llm.provider,
       model: llm.model
-    };
+    }, usage, pricing);
   });
 }

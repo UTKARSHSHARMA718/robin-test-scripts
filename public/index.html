@@ -46,7 +46,7 @@
       margin-bottom: 0.4rem;
       color: var(--muted);
     }
-    textarea, select, input[type="text"], input[type="file"] {
+    textarea, select, input[type="text"], input[type="number"], input[type="file"] {
       width: 100%;
       background: var(--panel);
       border: 1px solid var(--border);
@@ -65,7 +65,10 @@
     select, input[type="text"] { margin-bottom: 0; }
     .field { margin-bottom: 1.1rem; }
     .row { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
-    @media (max-width: 560px) { .row { grid-template-columns: 1fr; } }
+    .row-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.75rem; }
+    @media (max-width: 560px) {
+      .row, .row-3 { grid-template-columns: 1fr; }
+    }
     button {
       width: 100%;
       padding: 0.85rem 1rem;
@@ -145,6 +148,26 @@
         ></textarea>
       </div>
 
+      <h2 class="section-title">Optional: token pricing (USD per 1M tokens)</h2>
+      <p class="hint" style="margin-top: 0;">
+        Fill <strong>input</strong> and <strong>output</strong> rates to estimate Robin generation cost. Leave blank to skip cost.
+        Cached rate is optional (defaults to input rate).
+      </p>
+      <div class="row-3">
+        <div class="field">
+          <label for="priceInput">Input ($/1M)</label>
+          <input type="number" id="priceInput" min="0" step="any" placeholder="e.g. 0.40" />
+        </div>
+        <div class="field">
+          <label for="priceOutput">Output ($/1M)</label>
+          <input type="number" id="priceOutput" min="0" step="any" placeholder="e.g. 1.60" />
+        </div>
+        <div class="field">
+          <label for="priceCached">Cached ($/1M)</label>
+          <input type="number" id="priceCached" min="0" step="any" placeholder="optional" />
+        </div>
+      </div>
+
       <div class="actions">
         <button type="submit" class="primary" id="submit">Generate Robin script</button>
       </div>
@@ -166,6 +189,40 @@
     const requirementEl = document.getElementById('requirement');
     const modelEl = document.getElementById('model');
     const fileEl = document.getElementById('aaFile');
+    const priceInputEl = document.getElementById('priceInput');
+    const priceOutputEl = document.getElementById('priceOutput');
+    const priceCachedEl = document.getElementById('priceCached');
+
+    function readPricingForGenerate() {
+      const inputPerMillion = priceInputEl.value.trim();
+      const outputPerMillion = priceOutputEl.value.trim();
+      const cachedPerMillion = priceCachedEl.value.trim();
+      if (!inputPerMillion || !outputPerMillion) return undefined;
+      const pricing = { inputPerMillion, outputPerMillion };
+      if (cachedPerMillion) pricing.cachedPerMillion = cachedPerMillion;
+      return { pricing };
+    }
+
+    function formatRobinMeta(data) {
+      const parts = [
+        `Provider: ${data.provider ?? '—'}`,
+        `Model: ${data.model ?? '—'}`,
+        `Steps: ${data.steps ?? '—'}`
+      ];
+      if (data.usage) {
+        const u = data.usage;
+        parts.push(
+          `Input tokens: ${u.promptTokens ?? 0}`,
+          `Output tokens: ${u.completionTokens ?? 0}`,
+          `Cached: ${u.cachedTokens ?? 0}`,
+          `Total: ${u.totalTokens ?? 0}`
+        );
+      }
+      if (data.cost) {
+        parts.push(`Est. cost: $${data.cost.total.toFixed(6)} USD`);
+      }
+      return parts.join(' · ');
+    }
 
     analyzeBtn.addEventListener('click', async () => {
       const file = fileEl.files?.[0];
@@ -234,7 +291,7 @@
         const response = await fetch('/api/generate', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ requirement, mode, model })
+          body: JSON.stringify({ requirement, mode, model, ...readPricingForGenerate() })
         });
         const data = await response.json();
         if (!response.ok) {
@@ -244,7 +301,7 @@
         }
         output.className = '';
         output.textContent = data.output ?? '(empty response)';
-        meta.textContent = `Provider: ${data.provider ?? '—'} · Model: ${data.model ?? '—'} · Steps: ${data.steps ?? '—'}`;
+        meta.textContent = formatRobinMeta(data);
       } catch (err) {
         output.className = 'error';
         output.textContent = err.message ?? 'Network error.';

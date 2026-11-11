@@ -24,9 +24,6 @@ Loops, conditions, try/catch or error handling, subtasks/bot invocations if pres
 ## Integrations and UI automation
 Excel, email, browser, SAP, databases, desktop UI selectors, API calls—mark uncertain items.
 
-## Migration notes for PAD
-For each major AA capability, suggest what PAD should search for (actions/modules), and call out gaps or manual steps.
-
 Rules:
 - Base conclusions on the supplied JSON and mechanical summary only.
 - Say explicitly when something is unclear.
