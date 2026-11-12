@@ -70,21 +70,35 @@ export function analyzeAaExport({ data, fileName, model }) {
   }));
 }
 
+/** @typedef {'combined' | 'individual'} BriefMode */
+
 /**
- * Analyze one or more bot JSON definitions; multi-bot packages get per-bot LLM calls then one merge call.
- * @param {{ bots: { data: object, fileName: string }[], model: string }} params
+ * Analyze one or more bot JSON definitions.
+ * Multi-bot + combined: per-bot LLM calls then one merge call.
+ * Multi-bot + individual: per-bot LLM calls only (separate briefs).
+ * @param {{ bots: { data: object, fileName: string }[], model: string, briefMode?: BriefMode }} params
  */
-export async function analyzeAaPackage({ bots, model }) {
+export async function analyzeAaPackage({ bots, model, briefMode = 'individual' }) {
   if (!bots?.length) throw new Error('No bot definitions to analyze.');
+  const mode = briefMode === 'combined' ? 'combined' : 'individual';
 
   if (bots.length === 1) {
     const { data, fileName } = bots[0];
     const result = await analyzeAaExport({ data, fileName, model });
     return {
+      briefMode: mode,
       understanding: result.understanding,
       mechanical: result.mechanical,
       truncated: result.truncated,
       packageKind: 'single',
+      workflows: [
+        {
+          fileName,
+          understanding: result.understanding,
+          mechanical: result.mechanical,
+          truncated: result.truncated
+        }
+      ],
       bots: [
         {
           fileName,
@@ -102,16 +116,41 @@ export async function analyzeAaPackage({ bots, model }) {
     })
   );
 
+  const workflows = perBot.map(b => ({
+    fileName: b.fileName,
+    understanding: b.understanding,
+    mechanical: b.mechanical,
+    truncated: b.truncated
+  }));
+
+  if (mode === 'individual') {
+    return {
+      briefMode: 'individual',
+      understanding: undefined,
+      mechanical: perBot.map(b => b.mechanical),
+      truncated: perBot.some(b => b.truncated),
+      packageKind: 'multi',
+      workflows,
+      bots: perBot.map(b => ({
+        fileName: b.fileName,
+        mechanical: b.mechanical,
+        truncated: b.truncated
+      }))
+    };
+  }
+
   const understanding = await combineUnderstandings(
     model,
     perBot.map(b => ({ fileName: b.fileName, understanding: b.understanding }))
   );
 
   return {
+    briefMode: 'combined',
     understanding,
     mechanical: perBot.map(b => b.mechanical),
     truncated: perBot.some(b => b.truncated),
     packageKind: 'multi',
+    workflows,
     bots: perBot.map(b => ({
       fileName: b.fileName,
       mechanical: b.mechanical,

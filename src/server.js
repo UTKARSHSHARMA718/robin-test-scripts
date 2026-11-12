@@ -29,6 +29,10 @@ function collectUploadedFiles(req) {
   return [...multi, ...single, ...legacy];
 }
 
+function parseBriefMode(value) {
+  return value === 'combined' ? 'combined' : 'individual';
+}
+
 app.use(express.json({ limit: '2mb' }));
 app.use(express.static(publicDir));
 
@@ -69,12 +73,15 @@ app.post('/api/analyze-aa', analyzeUpload, async (req, res) => {
       return res.status(400).json({ error: 'Upload one or more .zip or .json bot exports.' });
     }
 
+    const briefMode = parseBriefMode(req.body?.briefMode);
     const uploads = files.map(f => ({ buffer: f.buffer, originalname: f.originalname }));
     const { bots, packageKind } = parseAaUploadBatch(uploads);
-    const result = await analyzeAaPackage({ bots, model });
+    const result = await analyzeAaPackage({ bots, model, briefMode });
 
     res.json({
+      briefMode: result.briefMode,
       understanding: result.understanding,
+      workflows: result.workflows,
       mechanical: result.mechanical,
       truncated: result.truncated,
       packageKind: result.packageKind ?? packageKind,

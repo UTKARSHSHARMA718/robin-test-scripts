@@ -105,6 +105,46 @@
     .error { color: var(--error); }
     .loading { color: var(--muted); }
     .actions { display: flex; flex-direction: column; gap: 0.65rem; margin-top: 1rem; }
+    .workflow-card {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.85rem 0.9rem 1rem;
+      margin-bottom: 0.85rem;
+      background: var(--panel);
+    }
+    .workflow-card h3 {
+      margin: 0 0 0.5rem;
+      font-size: 0.88rem;
+      font-weight: 600;
+      color: var(--text);
+      word-break: break-word;
+    }
+    .workflow-card textarea { min-height: 160px; }
+    .robin-card {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1rem;
+      margin-bottom: 0.85rem;
+      background: var(--panel);
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-size: 0.9rem;
+      font-family: ui-monospace, Menlo, monospace;
+    }
+    .robin-card h3 {
+      margin: 0 0 0.65rem;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      font-size: 0.88rem;
+      font-weight: 600;
+      color: var(--muted);
+      word-break: break-word;
+    }
+    .robin-card .robin-meta {
+      margin-top: 0.65rem;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      font-size: 0.78rem;
+      color: var(--muted);
+    }
   </style>
 </head>
 <body>
@@ -140,10 +180,21 @@
         </p>
         <p id="packageInfo" class="hint" hidden></p>
       </div>
+      <div class="field">
+        <label for="briefMode">Brief &amp; Robin generation mode</label>
+        <select id="briefMode" name="briefMode">
+          <option value="individual" selected>Individual — separate brief and Robin per workflow</option>
+          <option value="combined">Combined — one merged brief and one Robin script</option>
+        </select>
+        <p class="hint">
+          <strong>Individual</strong> applies when multiple workflows are detected. <strong>Combined</strong> merges
+          them into one editable brief (previous default for multi-bot packages).
+        </p>
+      </div>
       <button type="button" class="secondary" id="analyzeBtn">Analyze bot → fill brief</button>
 
       <h2 class="section-title">2. Migration brief (edit before generating)</h2>
-      <div class="field">
+      <div id="briefsCombined" class="field">
         <label for="requirement">Understanding &amp; PAD requirements</label>
         <textarea
           id="requirement"
@@ -151,6 +202,7 @@
           placeholder="Upload and analyze an AA bot, or type your migration brief here."
         ></textarea>
       </div>
+      <div id="briefsIndividual" hidden></div>
 
       <h2 class="section-title">Optional: token pricing (USD per 1M tokens)</h2>
       <p class="hint" style="margin-top: 0;">
@@ -179,8 +231,11 @@
 
     <section class="output-section">
       <h2>Robin output</h2>
-      <div id="output" class="loading">Generated Robin will appear here.</div>
-      <div id="meta"></div>
+      <div id="outputCombined">
+        <div id="output" class="loading">Generated Robin will appear here.</div>
+        <div id="meta"></div>
+      </div>
+      <div id="outputIndividual" hidden></div>
     </section>
   </div>
 
@@ -194,9 +249,124 @@
     const modelEl = document.getElementById('model');
     const fileEl = document.getElementById('aaFile');
     const packageInfoEl = document.getElementById('packageInfo');
+    const briefModeEl = document.getElementById('briefMode');
+    const briefsCombinedEl = document.getElementById('briefsCombined');
+    const briefsIndividualEl = document.getElementById('briefsIndividual');
+    const outputCombinedEl = document.getElementById('outputCombined');
+    const outputIndividualEl = document.getElementById('outputIndividual');
     const priceInputEl = document.getElementById('priceInput');
     const priceOutputEl = document.getElementById('priceOutput');
     const priceCachedEl = document.getElementById('priceCached');
+
+    /** @type {{ briefMode: string, packageKind: string, workflowCount: number } | null} */
+    let lastAnalyze = null;
+    /** @type {object | null} */
+    let lastAnalyzeResult = null;
+
+    function currentBriefMode() {
+      return briefModeEl.value === 'combined' ? 'combined' : 'individual';
+    }
+
+    function useIndividualBriefsUi() {
+      return (
+        currentBriefMode() === 'individual' &&
+        lastAnalyze &&
+        lastAnalyze.workflowCount > 1
+      );
+    }
+
+    function syncBriefEditorVisibility() {
+      const split = useIndividualBriefsUi();
+      briefsCombinedEl.hidden = split;
+      briefsIndividualEl.hidden = !split;
+    }
+
+    function syncOutputVisibility() {
+      const split = useIndividualBriefsUi();
+      outputCombinedEl.hidden = split;
+      outputIndividualEl.hidden = !split;
+    }
+
+    function renderWorkflowBriefs(workflows) {
+      briefsIndividualEl.innerHTML = '';
+      for (const wf of workflows) {
+        const card = document.createElement('div');
+        card.className = 'workflow-card';
+        const title = document.createElement('h3');
+        title.textContent = wf.fileName;
+        const ta = document.createElement('textarea');
+        ta.dataset.fileName = wf.fileName;
+        ta.value = wf.understanding ?? '';
+        ta.placeholder = 'Migration brief for this workflow.';
+        card.append(title, ta);
+        briefsIndividualEl.appendChild(card);
+      }
+    }
+
+    function clearWorkflowBriefs() {
+      briefsIndividualEl.innerHTML = '';
+    }
+
+    function readWorkflowRequirements() {
+      return [...briefsIndividualEl.querySelectorAll('textarea')].map(ta => ({
+        fileName: ta.dataset.fileName ?? 'workflow',
+        requirement: ta.value.trim()
+      }));
+    }
+
+    function shortFileName(fileName) {
+      const arrow = fileName.lastIndexOf(' → ');
+      return arrow >= 0 ? fileName.slice(arrow + 3) : fileName;
+    }
+
+    function renderIndividualRobinOutputs(items, { keepProgressEl } = {}) {
+      outputIndividualEl.innerHTML = '';
+      if (keepProgressEl?.parentNode) outputIndividualEl.appendChild(keepProgressEl);
+      for (const item of items) {
+        const card = document.createElement('div');
+        card.className = 'robin-card';
+        const title = document.createElement('h3');
+        title.textContent = item.fileName;
+        const body = document.createElement('div');
+        body.textContent = item.output ?? '(empty)';
+        if (item.error) body.classList.add('error');
+        const metaLine = document.createElement('div');
+        metaLine.className = 'robin-meta';
+        metaLine.textContent = item.error
+          ? item.error
+          : formatRobinMeta(item);
+        card.append(title, body, metaLine);
+        outputIndividualEl.appendChild(card);
+      }
+    }
+
+    function applyBriefModeToEditors() {
+      if (!lastAnalyzeResult) return;
+      const workflows = lastAnalyzeResult.workflows ?? [];
+      const workflowCount = workflows.length || (lastAnalyzeResult.understanding ? 1 : 0);
+      const split = currentBriefMode() === 'individual' && workflowCount > 1;
+
+      if (split) {
+        renderWorkflowBriefs(workflows);
+        requirementEl.value = '';
+      } else {
+        clearWorkflowBriefs();
+        requirementEl.value =
+          lastAnalyzeResult.understanding ?? workflows[0]?.understanding ?? '';
+      }
+
+      lastAnalyze = {
+        briefMode: currentBriefMode(),
+        packageKind: lastAnalyzeResult.packageKind ?? 'single',
+        workflowCount
+      };
+    }
+
+    briefModeEl.addEventListener('change', () => {
+      applyBriefModeToEditors();
+      syncBriefEditorVisibility();
+      syncOutputVisibility();
+    });
 
     function readPricingForGenerate() {
       const inputPerMillion = priceInputEl.value.trim();
@@ -309,6 +479,7 @@
         const body = new FormData();
         for (const f of files) body.append('files', f);
         body.append('model', model);
+        body.append('briefMode', currentBriefMode());
         const response = await fetch('/api/analyze-aa', { method: 'POST', body });
         const data = await response.json();
         if (!response.ok) {
@@ -316,12 +487,34 @@
           output.textContent = data.error ?? 'Analysis failed.';
           return;
         }
-        requirementEl.value = data.understanding ?? '';
+
+        lastAnalyzeResult = data;
+        const workflows = data.workflows ?? [];
+        const workflowCount = workflows.length || (data.understanding ? 1 : 0);
+        lastAnalyze = {
+          briefMode: data.briefMode ?? currentBriefMode(),
+          packageKind: data.packageKind ?? 'single',
+          workflowCount
+        };
+
+        const splitBriefs =
+          (data.briefMode ?? currentBriefMode()) === 'individual' && workflowCount > 1;
+
+        applyBriefModeToEditors();
+
+        syncBriefEditorVisibility();
+        syncOutputVisibility();
+        outputIndividualEl.innerHTML = '';
+
         output.className = '';
-        const multi = data.packageKind === 'multi';
-        output.textContent = multi
-          ? 'Combined brief updated in step 2 (multi-workflow package). Edit if needed, then click Generate Robin script.'
-          : 'Brief updated in step 2. Edit if needed, then click Generate Robin script.';
+        if (splitBriefs) {
+          output.textContent = `${workflowCount} workflow briefs updated in step 2. Edit each, then Generate Robin script (sequential, one workflow at a time).`;
+        } else if (data.packageKind === 'multi' && data.briefMode === 'combined') {
+          output.textContent =
+            'Combined brief updated in step 2. Edit if needed, then click Generate Robin script.';
+        } else {
+          output.textContent = 'Brief updated in step 2. Edit if needed, then click Generate Robin script.';
+        }
         meta.textContent = formatAnalyzeMeta(data);
       } catch (err) {
         output.className = 'error';
@@ -331,41 +524,93 @@
       }
     });
 
+    async function generateOneRobin({ requirement, mode, model, pricingPayload }) {
+      const response = await fetch('/api/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requirement, mode, model, ...pricingPayload })
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error ?? 'Request failed.');
+      }
+      return data;
+    }
+
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
-      const requirement = requirementEl.value.trim();
-      const mode = document.getElementById('mode').value;
+      const padMode = document.getElementById('mode').value;
       const model = modelEl.value.trim();
+      const pricingPayload = readPricingForGenerate() ?? {};
+      const split = useIndividualBriefsUi();
 
-      if (!requirement) {
-        alert('Add or generate a migration brief in step 2.');
-        return;
-      }
       if (!model) {
         alert('Enter a model name.');
         return;
       }
 
       submitBtn.disabled = true;
-      output.className = 'loading';
-      output.textContent = 'Calling pad-mcp and the LLM… this may take a minute.';
-      meta.textContent = '';
+      syncOutputVisibility();
 
       try {
-        const response = await fetch('/api/generate', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ requirement, mode, model, ...readPricingForGenerate() })
-        });
-        const data = await response.json();
-        if (!response.ok) {
-          output.className = 'error';
-          output.textContent = data.error ?? 'Request failed.';
-          return;
+        if (split) {
+          const workflows = readWorkflowRequirements();
+          if (workflows.some(w => !w.requirement)) {
+            alert('Every workflow needs a migration brief in step 2.');
+            return;
+          }
+
+          const results = [];
+          const total = workflows.length;
+          const progressEl = document.createElement('p');
+          progressEl.className = 'loading';
+          outputIndividualEl.replaceChildren(progressEl);
+
+          for (let i = 0; i < total; i++) {
+            const wf = workflows[i];
+            const label = shortFileName(wf.fileName);
+            progressEl.textContent = `Generating Robin ${i + 1} of ${total}: ${label}… (sequential)`;
+
+            try {
+              const data = await generateOneRobin({
+                requirement: wf.requirement,
+                mode: padMode,
+                model,
+                pricingPayload
+              });
+              results.push({ fileName: wf.fileName, ...data });
+            } catch (err) {
+              results.push({
+                fileName: wf.fileName,
+                output: '',
+                error: err.message ?? 'Generation failed.'
+              });
+            }
+
+            const done = i === total - 1;
+            renderIndividualRobinOutputs(results, { keepProgressEl: done ? null : progressEl });
+          }
+        } else {
+          const requirement = requirementEl.value.trim();
+          if (!requirement) {
+            alert('Add or generate a migration brief in step 2.');
+            return;
+          }
+
+          output.className = 'loading';
+          output.textContent = 'Calling pad-mcp and the LLM… this may take a minute.';
+          meta.textContent = '';
+
+          const data = await generateOneRobin({
+            requirement,
+            mode: padMode,
+            model,
+            pricingPayload
+          });
+          output.className = '';
+          output.textContent = data.output ?? '(empty response)';
+          meta.textContent = formatRobinMeta(data);
         }
-        output.className = '';
-        output.textContent = data.output ?? '(empty response)';
-        meta.textContent = formatRobinMeta(data);
       } catch (err) {
         output.className = 'error';
         output.textContent = err.message ?? 'Network error.';
