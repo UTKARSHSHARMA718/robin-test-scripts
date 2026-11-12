@@ -133,8 +133,12 @@
       <h2 class="section-title">1. Upload Automation Anywhere bot</h2>
       <div class="field">
         <label for="aaFile">Bot export (.zip or .json)</label>
-        <input type="file" id="aaFile" accept=".zip,.json,application/json,application/zip" />
-        <p class="hint">Zip exports should contain at least one <code>.json</code> bot definition.</p>
+        <input type="file" id="aaFile" accept=".zip,.json,application/json,application/zip" multiple />
+        <p class="hint">
+          One file = single-workflow bot. Multiple <code>.json</code> files or a <code>.zip</code> with several
+          <code>.json</code> definitions = multi-workflow package. You can also select several files at once.
+        </p>
+        <p id="packageInfo" class="hint" hidden></p>
       </div>
       <button type="button" class="secondary" id="analyzeBtn">Analyze bot → fill brief</button>
 
@@ -189,6 +193,7 @@
     const requirementEl = document.getElementById('requirement');
     const modelEl = document.getElementById('model');
     const fileEl = document.getElementById('aaFile');
+    const packageInfoEl = document.getElementById('packageInfo');
     const priceInputEl = document.getElementById('priceInput');
     const priceOutputEl = document.getElementById('priceOutput');
     const priceCachedEl = document.getElementById('priceCached');
@@ -202,6 +207,65 @@
       if (cachedPerMillion) pricing.cachedPerMillion = cachedPerMillion;
       return { pricing };
     }
+
+    function formatPackageKind(kind) {
+      return kind === 'multi' ? 'Multi-workflow package' : 'Single-workflow bot';
+    }
+
+    function formatAnalyzeMeta(data) {
+      const kind = data.packageKind ?? (data.bots?.length > 1 ? 'multi' : 'single');
+      const parts = [formatPackageKind(kind)];
+      if (data.bots?.length) {
+        parts.push(`${data.bots.length} workflow(s)`);
+        const names = data.bots.map(b => b.fileName ?? b.mechanical?.fileName).filter(Boolean);
+        if (names.length) parts.push(names.join(', '));
+      } else if (data.mechanical?.fileName) {
+        parts.push(`Analyzed: ${data.mechanical.fileName}`);
+        const mech = data.mechanical;
+        parts.push(`packages: ${mech.packages?.length ?? 0}`, `commands: ${mech.commands?.length ?? 0}`);
+      }
+      if (data.truncated) parts.push('JSON truncated for LLM');
+      return parts.join(' · ');
+    }
+
+    let inspectTimer;
+    fileEl.addEventListener('change', () => {
+      clearTimeout(inspectTimer);
+      const files = fileEl.files;
+      if (!files?.length) {
+        packageInfoEl.hidden = true;
+        packageInfoEl.textContent = '';
+        return;
+      }
+      inspectTimer = setTimeout(async () => {
+        packageInfoEl.hidden = false;
+        packageInfoEl.textContent = 'Reading upload…';
+        packageInfoEl.classList.remove('error');
+        try {
+          const body = new FormData();
+          for (const f of files) body.append('files', f);
+          const response = await fetch('/api/inspect-aa', { method: 'POST', body });
+          const data = await response.json();
+          if (!response.ok) {
+            packageInfoEl.classList.add('error');
+            packageInfoEl.textContent = data.error ?? 'Could not read upload.';
+            return;
+          }
+          const lines = [
+            `${formatPackageKind(data.packageKind)} — ${data.botCount} workflow definition(s) detected.`
+          ];
+          if (data.bots?.length) {
+            lines.push(data.bots.map(b => `• ${b.fileName}`).join('\n'));
+          }
+          packageInfoEl.classList.remove('error');
+          packageInfoEl.style.whiteSpace = 'pre-wrap';
+          packageInfoEl.textContent = lines.join('\n');
+        } catch (err) {
+          packageInfoEl.classList.add('error');
+          packageInfoEl.textContent = err.message ?? 'Could not read upload.';
+        }
+      }, 250);
+    });
 
     function formatRobinMeta(data) {
       const parts = [
@@ -225,10 +289,10 @@
     }
 
     analyzeBtn.addEventListener('click', async () => {
-      const file = fileEl.files?.[0];
+      const files = fileEl.files;
       const model = modelEl.value.trim();
-      if (!file) {
-        alert('Choose a .zip or .json file first.');
+      if (!files?.length) {
+        alert('Choose one or more .zip or .json files first.');
         return;
       }
       if (!model) {
@@ -243,7 +307,7 @@
 
       try {
         const body = new FormData();
-        body.append('file', file);
+        for (const f of files) body.append('files', f);
         body.append('model', model);
         const response = await fetch('/api/analyze-aa', { method: 'POST', body });
         const data = await response.json();
@@ -254,11 +318,11 @@
         }
         requirementEl.value = data.understanding ?? '';
         output.className = '';
-        output.textContent = 'Brief updated in step 2. Edit if needed, then click Generate Robin script.';
-        const mech = data.mechanical;
-        meta.textContent = mech
-          ? `Analyzed: ${mech.fileName} · packages: ${mech.packages?.length ?? 0} · commands: ${mech.commands?.length ?? 0}${data.truncated ? ' · JSON truncated for LLM' : ''}`
-          : '';
+        const multi = data.packageKind === 'multi';
+        output.textContent = multi
+          ? 'Combined brief updated in step 2 (multi-workflow package). Edit if needed, then click Generate Robin script.'
+          : 'Brief updated in step 2. Edit if needed, then click Generate Robin script.';
+        meta.textContent = formatAnalyzeMeta(data);
       } catch (err) {
         output.className = 'error';
         output.textContent = err.message ?? 'Network error.';

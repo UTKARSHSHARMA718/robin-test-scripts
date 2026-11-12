@@ -11,16 +11,60 @@ const COMMAND_KEYS = new Set([
 ]);
 const TYPE_KEYS = new Set(['type', 'nodeType', 'kind', 'actionType', 'commandType']);
 
-/** Read bot JSON from an Automation Anywhere .json file or .zip (first .json inside). */
+/** @typedef {{ fileName: string, data: object }} AaBotEntry */
+/** @typedef {'single' | 'multi'} AaPackageKind */
+
+/**
+ * Parse one uploaded .json or .zip into one or more bot definitions.
+ * @returns {{ bots: AaBotEntry[], packageKind: AaPackageKind }}
+ */
 export function parseAaUpload(buffer, originalName) {
+  const bots = expandUploadToBots(buffer, originalName);
+  return { bots, packageKind: packageKindFromCount(bots.length) };
+}
+
+/**
+ * Parse multiple uploads (.json and/or .zip files) into a flat bot list.
+ * @param {{ buffer: Buffer, originalname: string }[]} uploads
+ */
+export function parseAaUploadBatch(uploads) {
+  if (!uploads?.length) {
+    throw new Error('Upload at least one .json bot export or .zip containing .json file(s).');
+  }
+  const bots = [];
+  for (const { buffer, originalname } of uploads) {
+    assertUploadSize(buffer);
+    bots.push(...expandUploadToBots(buffer, originalname));
+  }
+  return { bots, packageKind: packageKindFromCount(bots.length) };
+}
+
+/** Mechanical summary only — for UI before LLM analysis. */
+export function inspectAaPackage(uploads) {
+  const { bots, packageKind } = parseAaUploadBatch(uploads);
+  return {
+    packageKind,
+    botCount: bots.length,
+    bots: bots.map(({ fileName, data }) => ({
+      fileName,
+      mechanical: summarizeAaBot(data, fileName)
+    }))
+  };
+}
+
+function packageKindFromCount(count) {
+  return count > 1 ? 'multi' : 'single';
+}
+
+function expandUploadToBots(buffer, originalName) {
   const lower = originalName.toLowerCase();
   if (lower.endsWith('.json')) {
-    return { fileName: originalName, data: parseJsonBuffer(buffer) };
+    return [{ fileName: originalName, data: parseJsonBuffer(buffer) }];
   }
   if (lower.endsWith('.zip')) {
-    return extractJsonFromZip(buffer, originalName);
+    return extractAllJsonFromZip(buffer, originalName);
   }
-  throw new Error('Upload a .json bot export or a .zip containing a .json file.');
+  throw new Error(`"${originalName}" is not a .json or .zip file.`);
 }
 
 function parseJsonBuffer(buffer) {
@@ -32,20 +76,21 @@ function parseJsonBuffer(buffer) {
   }
 }
 
-function extractJsonFromZip(buffer, zipName) {
+function extractAllJsonFromZip(buffer, zipName) {
   const zip = new AdmZip(buffer);
   const jsonEntries = zip.getEntries().filter(entry =>
     !entry.isDirectory && entry.entryName.toLowerCase().endsWith('.json')
   );
   if (!jsonEntries.length) {
-    throw new Error('No .json file found inside the zip.');
+    throw new Error(`No .json file found inside ${zipName}.`);
   }
-  const pick =
-    jsonEntries.find(e => /(^|\/)bot\.json$/i.test(e.entryName)) ??
-    jsonEntries.find(e => /bot/i.test(e.entryName)) ??
-    [...jsonEntries].sort((a, b) => b.header.size - a.header.size)[0];
-  const data = parseJsonBuffer(pick.getData());
-  return { fileName: `${zipName} → ${pick.entryName}`, data };
+  const sorted = [...jsonEntries].sort((a, b) =>
+    a.entryName.localeCompare(b.entryName, undefined, { sensitivity: 'base' })
+  );
+  return sorted.map(entry => ({
+    fileName: `${zipName} → ${entry.entryName}`,
+    data: parseJsonBuffer(entry.getData())
+  }));
 }
 
 /** Best-effort structural summary to ground the LLM (format varies by AA version). */
